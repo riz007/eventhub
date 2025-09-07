@@ -11,7 +11,7 @@
     "target": "es2020",
     "moduleResolution": "Node",
     "esModuleInterop":true,
-    "types": [],
+    "types": ["node"],
     // For nodejs:
     // "lib": ["esnext"],
     // "types": ["node"],
@@ -41,10 +41,7 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
     "outDir": "dist",
-     "typeRoots": ["./node_modules/@types", "./src/types"]
+     "typeRoots": ["./src/types", "./node_modules/@types"]
   },
-   "include": [
-    "./src/**/*.ts",
-    "./src/types/fastify.d.ts"
-  ]
+  "include": ["src/**/*.ts", "src/**/*.d.ts"]
 }

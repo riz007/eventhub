@@ -1,11 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import dotenv from "dotenv";
-import Fastify from 'fastify';
-import { z} from 'zod';
+import Fastify, { FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import bcrypt from "bcrypt";
 import rateLimit from "@fastify/rate-limit";
 import helmet from "@fastify/helmet";
 import crypto from "crypto";
+import fastifyCookie from '@fastify/cookie';
+import fastifyJwt from "@fastify/jwt";
 
 dotenv.config();
 
@@ -15,7 +17,7 @@ const app = Fastify({
   logger: {
     transport: {
       target: "pino-pretty",
-      options: {translateTime: "SYS:standard", ignore: "pid,hostname"},
+      options: { translateTime: "SYS:standard", ignore: "pid,hostname" },
     },
     level: "info"
   },
@@ -32,6 +34,30 @@ app.register(helmet, {
   contentSecurityPolicy: false
 });
 
+app.register(fastifyCookie);
+app.register(fastifyJwt, {
+  secret: process.env.JWT_SECRET || "super-secret-key",
+  cookie: {
+    cookieName: "token",
+    signed: false,
+  },
+  sign: {
+    expiresIn: "1h",
+  },
+});
+
+app.decorate(
+  "authenticate",
+  async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      await request.jwtVerify();
+    } catch (err) {
+      reply.send(err);
+    }
+  }
+);
+
+// Hooks
 app.addHook("onRequest", async (req) => {
   req.log.info({ url: req.url, method: req.method }, "incoming request");
 });
@@ -44,7 +70,6 @@ app.addHook("onRequest", async (req) => {
   (req as any).startTime = Date.now();
 });
 
-// Log slow requests
 app.addHook("onResponse", async (req, reply) => {
   const duration = Date.now() - (req as any).startTime;
   if (duration > 1000) {
@@ -52,9 +77,64 @@ app.addHook("onResponse", async (req, reply) => {
   }
 });
 
-// Health check endpoint
+// Health check
 app.get('/health', async () => {
   return { status: 'ok' }
+});
+
+// Signup
+app.post("/auth/signup", async (request, reply) => {
+  const schema = z.object({
+    email: z.string().email(),
+    password: z.string().min(6)
+  });
+  const { email, password } = schema.parse(request.body);
+
+  const isUserExist = await prisma.user.findUnique({ where: { email } });
+  if (isUserExist) return reply.status(400).send({ error: "Email already exists" });
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const user = await prisma.user.create({
+    data: { email, passwordHash: hashedPassword }
+  });
+
+  const token = app.jwt.sign({ userId: user.id });
+
+  reply.setCookie("token", token, {
+    httpOnly: true,
+    secure: false,
+    path: "/",
+    maxAge: 60 * 60
+  });
+
+  return reply.status(201).send({ id: user.id, email: user.email });
+});
+
+// Login
+app.post("/auth/login", async (request, reply) => {
+  const schema = z.object({
+    email: z.string().email(),
+    password: z.string().min(6)
+  });
+
+  const { email, password } = schema.parse(request.body);
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) return reply.status(401).send({ error: "Invalid credentials" });
+
+  const isValid = await bcrypt.compare(password, user.passwordHash);
+  if (!isValid) return reply.status(401).send({ error: 'Invalid credentials' });
+
+  const token = app.jwt.sign({ userId: user.id });
+  reply.setCookie("token", token, {
+    httpOnly: true,
+    secure: false,
+    path: "/",
+    maxAge: 60 * 60,
+  });
+
+  return reply.send({ id: user.id, email: user.email });
 });
 
 // Create user
@@ -67,7 +147,7 @@ app.post("/users", async (request, reply) => {
 
     const { email, passwordHash } = userSchema.parse(request.body);
 
-    const hashedPassword = await bcrypt.hash(passwordHash, 10)
+    const hashedPassword = await bcrypt.hash(passwordHash, 10);
 
     const user = await prisma.user.create({
       data: { email, passwordHash: hashedPassword }
@@ -76,9 +156,9 @@ app.post("/users", async (request, reply) => {
     const { passwordHash: _, ...userWithoutPassword } = user;
     reply.status(201).send(userWithoutPassword);
   } catch (err) {
-    reply.status(400).send({error: err instanceof Error ? err.message : String(err)})
+    reply.status(400).send({ error: err instanceof Error ? err.message : String(err) });
   }
-})
+});
 
 // Get all users
 app.get("/users", async () => {
@@ -100,7 +180,7 @@ app.get("/users/:id", async (request, reply) => {
 
   if (!user) return reply.status(404).send({ error: "User not found" });
   return user;
-})
+});
 
 // Update user
 app.patch("/users/:id", async (request, reply) => {
@@ -128,9 +208,8 @@ app.patch("/users/:id", async (request, reply) => {
   } catch (err) {
     reply.status(400).send({ error: err instanceof Error ? err.message : String(err) });
   }
-})
+});
 
-// Delete user
 app.delete("/users/:id", async (request, reply) => {
   const paramsSchema = z.object({ id: z.string().regex(/^\d+$/) });
   const { id } = paramsSchema.parse(request.params);
@@ -141,7 +220,13 @@ app.delete("/users/:id", async (request, reply) => {
   } catch {
     reply.status(404).send({ error: "User not found" });
   }
-})
+});
+
+app.get('/me', async (req, reply) => {
+  const userId = (req as any).user?.userId;
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  return user;
+});
 
 export async function start() {
   try {
@@ -153,5 +238,5 @@ export async function start() {
 }
 
 if (require.main === module) {
-  start()
+  start();
 }

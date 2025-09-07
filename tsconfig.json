@@ -40,6 +40,11 @@
     "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
     "skipLibCheck": true,
-    "outDir": "dist"
-  }
+    "outDir": "dist",
+     "typeRoots": ["./node_modules/@types", "./src/types"]
+  },
+   "include": [
+    "./src/**/*.ts",
+    "./src/types/fastify.d.ts"
+  ]
 }

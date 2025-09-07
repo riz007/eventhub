@@ -10,3 +10,6 @@ CREATE TABLE "public"."User" (
 
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "public"."User"("email");
+
+ALTER TABLE "User" ADD COLUMN "passwordHash" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "User" ADD COLUMN "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW();
